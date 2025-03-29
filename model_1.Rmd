@@ -1,0 +1,605 @@
+---
+title: "ML Model 1 Final"
+author: "Asad"
+date: "2024-11-25"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+
+
+```{r}
+EPL0809 <- read.csv("C:/Users/asada/OneDrive/Desktop/Projects/premier-league-betting/datasets/EPL08-09.csv")
+EPL0910 <- read.csv("C:/Users/asada/OneDrive/Desktop/Projects/premier-league-betting/datasets/EPL09-10.csv")
+EPL1011 <- read.csv("C:/Users/asada/OneDrive/Desktop/Projects/premier-league-betting/datasets/EPL10-11.csv")
+EPL1112 <- read.csv("C:/Users/asada/OneDrive/Desktop/Projects/premier-league-betting/datasets/EPL11-12.csv")
+EPL1213 <- read.csv("C:/Users/asada/OneDrive/Desktop/Projects/premier-league-betting/datasets/EPL12-13.csv")
+EPL1314 <- read.csv("C:/Users/asada/OneDrive/Desktop/Projects/premier-league-betting/datasets/EPL13-14.csv")
+EPL1415 <- read.csv("C:/Users/asada/OneDrive/Desktop/Projects/premier-league-betting/datasets/EPL14-15.csv")
+EPL1516 <- read.csv("C:/Users/asada/OneDrive/Desktop/Projects/premier-league-betting/datasets/EPL15-16.csv")
+EPL1617 <- read.csv("C:/Users/asada/OneDrive/Desktop/Projects/premier-league-betting/datasets/EPL16-17.csv")
+EPL1718 <- read.csv("C:/Users/asada/OneDrive/Desktop/Projects/premier-league-betting/datasets/EPL17-18.csv")
+EPL1819 <- read.csv("C:/Users/asada/OneDrive/Desktop/Projects/premier-league-betting/datasets/EPL18-19.csv")
+EPL1920 <- read.csv("C:/Users/asada/OneDrive/Desktop/Projects/premier-league-betting/datasets/EPL19-20.csv")
+EPL2021 <- read.csv("C:/Users/asada/OneDrive/Desktop/Projects/premier-league-betting/datasets/EPL20-21.csv")
+EPL2122 <- read.csv("C:/Users/asada/OneDrive/Desktop/Projects/premier-league-betting/datasets/EPL21-22.csv")
+EPL2223 <- read.csv("C:/Users/asada/OneDrive/Desktop/Projects/premier-league-betting/datasets/EPL22-23.csv")
+EPL2324 <- read.csv("C:/Users/asada/OneDrive/Desktop/Projects/premier-league-betting/datasets/EPL23-24.csv")
+EPL2425 <- read.csv("C:/Users/asada/OneDrive/Desktop/Projects/premier-league-betting/datasets/EPL24-25.csv")
+```
+
+```{r}
+# Create a list of all dataframes
+epl_list <- list(EPL0809, EPL0910, EPL1011, EPL1112, EPL1213, EPL1314, EPL1415, 
+                 EPL1516, EPL1617, EPL1718, EPL1819, EPL1920, EPL2021, EPL2122, EPL2223, EPL2324, EPL2425)
+
+# Get all unique column names across datasets
+all_columns <- unique(unlist(lapply(epl_list, colnames)))
+
+# Standardize columns in each dataset
+epl_list <- lapply(epl_list, function(df) {
+  missing_cols <- setdiff(all_columns, colnames(df)) # Identify missing columns
+  df[missing_cols] <- NA                             # Add missing columns with NA
+  df <- df[, all_columns]                            # Reorder columns to match all_columns
+  return(df)
+})
+```
+
+```{r}
+# Combine all datasets
+epl_combined <- do.call(rbind, epl_list)
+
+# Preview the combined dataset
+head(epl_combined)
+#View(epl_combined)
+```
+
+```{r}
+write.csv(epl_combined, "C:/Users/asada/OneDrive/Desktop/Projects/premier-league-betting/datasets/EPL_combined_2008-2025.csv", row.names = FALSE)
+```
+
+
+```{r}
+# Load the combined dataset
+soccer_data <- read.csv("C:/Users/asada/OneDrive/Desktop/Projects/premier-league-betting/datasets/EPL_combined_2008-2025.csv")
+
+```
+
+```{r}
+# Set threshold for missing values
+threshold <- 0.9
+cols_to_keep <- colSums(is.na(soccer_data)) / nrow(soccer_data) < threshold
+
+# Keep only relevant columns
+soccer_cleaned <- soccer_data[, cols_to_keep]
+
+# Preview cleaned dataset
+print(paste("Columns kept:", sum(cols_to_keep), "/", ncol(soccer_data)))
+
+```
+
+```{r}
+library(lubridate)
+soccer_cleaned$Date <- dmy(soccer_cleaned$Date)
+
+# Remove rows with invalid or missing dates
+soccer_cleaned <- soccer_cleaned[!is.na(soccer_cleaned$Date), ]
+
+```
+
+```{r}
+# Add GoalDifference column
+soccer_cleaned$GoalDifference <- soccer_cleaned$FTHG - soccer_cleaned$FTAG
+
+```
+
+```{r}
+# Add Outcome column
+soccer_cleaned$Outcome <- factor(
+  ifelse(soccer_cleaned$FTR == "H", "Win",
+         ifelse(soccer_cleaned$FTR == "A", "Loss", "Draw"))
+)
+
+```
+
+```{r}
+# Keep only relevant columns
+relevant_columns <- c("Date", "HomeTeam", "AwayTeam", "FTHG", "FTAG", 
+                      "GoalDifference", "Outcome", "HS", "AS", "HST", "AST", 
+                      "B365H", "B365D", "B365A")
+soccer_cleaned <- soccer_cleaned[, relevant_columns]
+
+```
+
+```{r}
+# Summary of the cleaned dataset
+summary(soccer_cleaned)
+
+# Check for remaining missing values
+print(colSums(is.na(soccer_cleaned)))
+
+# Save cleaned dataset (optional)
+write.csv(soccer_cleaned, "cleaned_soccer_data.csv", row.names = FALSE)
+
+```
+```{r}
+# Load necessary library
+library(dplyr)
+library(zoo)  # For rolling averages
+
+# Function to calculate rolling averages for team performance
+add_rolling_metrics <- function(data, team_col, goals_col, conceded_col, is_home) {
+  data %>%
+    arrange(Date) %>%
+    group_by(!!sym(team_col)) %>%
+    mutate(
+      RollingGoalsScored = rollapply(
+        !!sym(goals_col), width = 5, FUN = mean, align = "right", fill = NA
+      ),
+      RollingGoalsConceded = rollapply(
+        !!sym(conceded_col), width = 5, FUN = mean, align = "right", fill = NA
+      )
+    ) %>%
+    ungroup()
+}
+
+# Add rolling metrics for Home and Away teams
+soccer_cleaned <- soccer_cleaned %>%
+  add_rolling_metrics("HomeTeam", "FTHG", "FTAG", TRUE) %>%
+  add_rolling_metrics("AwayTeam", "FTAG", "FTHG", FALSE)
+
+```
+
+
+```{r}
+soccer_cleaned <- soccer_cleaned %>%
+  group_by(HomeTeam) %>%
+  mutate(HomeWinRate = rollapply(ifelse(Outcome == "Win", 1, 0), width = 5, FUN = mean, fill = NA, align = "right")) %>%
+  ungroup() %>%
+  group_by(AwayTeam) %>%
+  mutate(AwayWinRate = rollapply(ifelse(Outcome == "Loss", 1, 0), width = 5, FUN = mean, fill = NA, align = "right")) %>%
+  ungroup()
+
+soccer_cleaned$HeadToHead <- apply(soccer_cleaned, 1, function(row) {
+  prev_matches <- soccer_cleaned[soccer_cleaned$HomeTeam == row['AwayTeam'] & soccer_cleaned$AwayTeam == row['HomeTeam'], ]
+  if (nrow(prev_matches) > 0) {
+    return(mean(prev_matches$GoalDifference, na.rm = TRUE))
+  } else {
+    return(NA)
+  }
+})
+
+
+
+
+# Rolling Goal Difference - Add This Code!
+soccer_cleaned <- soccer_cleaned %>%
+  group_by(HomeTeam) %>%
+  mutate(
+    HomeRollingGoalDiff = rollapply(FTHG - FTAG, width = 5, FUN = mean, align = "right", fill = NA)
+  ) %>%
+  ungroup() %>%
+  group_by(AwayTeam) %>%
+  mutate(
+    AwayRollingGoalDiff = rollapply(FTAG - FTHG, width = 5, FUN = mean, align = "right", fill = NA)
+  ) %>%
+  ungroup()
+
+
+```
+
+
+```{r}
+# Add rolling metrics for Home and Away teams
+soccer_cleaned <- soccer_cleaned %>%
+  arrange(Date) %>%
+  group_by(HomeTeam) %>%
+  mutate(
+    HomeRollingGoalsScored = rollapply(FTHG, width = 5, FUN = mean, align = "right", fill = NA),
+    HomeRollingGoalsConceded = rollapply(FTAG, width = 5, FUN = mean, align = "right", fill = NA)
+  ) %>%
+  ungroup() %>%
+  group_by(AwayTeam) %>%
+  mutate(
+    AwayRollingGoalsScored = rollapply(FTAG, width = 5, FUN = mean, align = "right", fill = NA),
+    AwayRollingGoalsConceded = rollapply(FTHG, width = 5, FUN = mean, align = "right", fill = NA)
+  ) %>%
+  ungroup()
+# Check for the newly added columns
+names(soccer_cleaned)
+
+
+
+```
+
+```{r}
+# Remove rows with NA values in rolling metrics
+soccer_cleaned <- soccer_cleaned %>%
+  filter(
+    !is.na(HomeRollingGoalsScored) & 
+    !is.na(AwayRollingGoalsScored) &
+    !is.na(HomeRollingGoalsConceded) &
+    !is.na(AwayRollingGoalsConceded) &
+    !is.na(HomeWinRate) &
+    !is.na(AwayWinRate) &
+    !is.na(HeadToHead)  &
+    !is.na(AwayRollingGoalDiff) &
+    !is.na(HomeRollingGoalDiff))
+
+```
+
+```{r}
+final_dataset <- soccer_cleaned %>%
+  select(Date, HomeTeam, AwayTeam, Outcome,
+         HomeRollingGoalsScored, HomeRollingGoalsConceded,
+         AwayRollingGoalsScored, AwayRollingGoalsConceded,
+         B365H, B365D, B365A, HomeWinRate, AwayWinRate, HeadToHead,
+         HomeRollingGoalDiff, AwayRollingGoalDiff)
+
+```
+
+
+
+```{r}
+set.seed(123)  # For reproducibility
+train_indices <- sample(1:nrow(final_dataset), size = 0.8 * nrow(final_dataset))
+
+train_data <- final_dataset[train_indices, ]
+test_data <- final_dataset[-train_indices, ]
+
+```
+
+```{r}
+# Load libraries
+library(randomForest)
+library(caret)  # For evaluating model performance
+
+
+class(train_data$Date)
+
+
+class(test_data$Date)
+
+
+
+
+```
+
+```{r}
+# Calculate class weights
+class_weights <- table(train_data$Outcome)
+class_weights <- max(class_weights) / class_weights
+
+# Train the Random Forest with class weights
+rf_model <- randomForest(
+  Outcome ~ HomeRollingGoalsScored + HomeRollingGoalsConceded +
+    AwayRollingGoalsScored + AwayRollingGoalsConceded +
+    HomeWinRate + AwayWinRate + HomeRollingGoalDiff + AwayRollingGoalDiff +
+    B365H + B365D + B365A + HeadToHead,
+  data = train_data,
+  ntree = 500,
+  mtry = 5,  # Optimized value of mtry
+  classwt = class_weights,  # Apply class weights
+  importance = TRUE
+)
+
+
+# Print model summary
+print(rf_model)
+
+
+```
+
+```{r}
+set.seed(123)
+rf_model <- randomForest(
+  Outcome ~ HomeRollingGoalsScored + HomeRollingGoalsConceded +
+    AwayRollingGoalsScored + AwayRollingGoalsConceded +
+    HomeWinRate + AwayWinRate + HomeRollingGoalDiff + AwayRollingGoalDiff +
+    B365H + B365D + B365A + HeadToHead,
+  data = train_data,
+  ntree = 1000,
+  mtry = 5, 
+  importance = TRUE
+)
+
+```
+
+
+```{r}
+tune_grid <- expand.grid(mtry = c(3, 4, 5, 6, 7))
+rf_tuned <- train(
+  Outcome ~ HomeRollingGoalsScored + HomeRollingGoalsConceded +
+    AwayRollingGoalsScored + AwayRollingGoalsConceded +
+    HomeWinRate + AwayWinRate + HomeRollingGoalDiff + AwayRollingGoalDiff +
+    B365H + B365D + B365A + HeadToHead,
+  data = train_data,
+  method = "rf",
+  trControl = trainControl(method = "cv", number = 5),
+  tuneGrid = tune_grid
+)
+
+
+# Print best mtry value
+print(rf_tuned$bestTune)
+
+```
+
+
+
+```{r}
+oob_error <- rf_model$err.rate[, 1]  # First column for OOB error
+
+# Create a data frame for plotting
+plot_dat <- data.frame(trees = 1:length(oob_error), oob_error = oob_error)
+
+# Plot OOB error vs number of trees
+plot(plot_dat$trees, plot_dat$oob_error, type = "l", col = "blue", 
+     xlab = "Number of Trees", ylab = "OOB Error Rate", 
+     main = "OOB Error vs Number of Trees")
+
+
+g_2 <- ggplot(plot_dat, aes(x = trees, y = oob_error)) + # Set x as trees and y as error
+  geom_point(alpha = 0.5, color = "blue") + # Select geom point
+  geom_smooth() + # Add smoothing line
+  theme_bw() + # Set theme
+  theme(panel.grid.major = element_blank(), # Remove grid
+        panel.grid.minor = element_blank(), # Remove grid
+        panel.border = element_blank(), # Remove grid
+        panel.background = element_blank()) + # Remove grid 
+  labs(x = "Number of Trees", title = "Error Rate v Number of Trees",
+       y = "Error Rate")  # Set labels
+g_2
+```
+
+```{r}
+rf_model <- randomForest(
+  Outcome ~ HomeRollingGoalsScored + HomeRollingGoalsConceded +
+    AwayRollingGoalsScored + AwayRollingGoalsConceded +
+    HomeWinRate + AwayWinRate + B365H + B365D + B365A + 
+    HeadToHead + AwayRollingGoalDiff + HomeRollingGoalDiff,
+  data = train_data,
+  ntree = 350,      # Optial number of trees
+  mtry = 6,         # Try with lower mtry
+  importance = TRUE
+)
+
+```
+
+```{r}
+# Train the random forest with 3 outcomes
+set.seed(123)
+rf_model <- randomForest(
+  Outcome ~ HomeRollingGoalsScored + HomeRollingGoalsConceded +
+    AwayRollingGoalsScored + AwayRollingGoalsConceded +
+    HomeWinRate + AwayWinRate + B365H + B365D + B365A +
+    HeadToHead + AwayRollingGoalDiff + HomeRollingGoalDiff,
+  data = train_data,
+  ntree = 350, mtry = 6, importance = TRUE
+)
+
+```
+
+
+
+
+```{r}
+# Predict on the test data
+rf_predictions <- predict(rf_model, test_data)
+
+# Print confusion matrix to analyze all outcomes
+conf_matrix_all <- confusionMatrix(rf_predictions, test_data$Outcome)
+print(conf_matrix_all)
+
+
+```
+
+```{r}
+# Filter test data to exclude Draw outcomes
+test_data_binary <- test_data %>% filter(Outcome != "Draw")
+
+# Remove Draw predictions as well
+rf_predictions_binary <- rf_predictions[test_data$Outcome != "Draw"]
+
+# Ensure factor levels are consistent
+rf_predictions_binary <- factor(rf_predictions_binary, levels = c("Win", "Loss"))
+test_data_binary$Outcome <- factor(test_data_binary$Outcome, levels = c("Win", "Loss"))
+
+```
+
+
+```{r}
+# Confusion matrix for Win and Loss only
+conf_matrix_binary <- confusionMatrix(rf_predictions_binary, test_data_binary$Outcome)
+print(conf_matrix_binary)
+
+```
+
+
+
+```{r}
+# Plot feature importance
+varImpPlot(rf_model)
+
+# Numerical importance values
+importance_values <- importance(rf_model)
+print(importance_values)
+
+```
+
+
+
+
+```{r}
+# Feature importance as a bar chart
+importance_values <- importance(rf_model)
+barplot(importance_values[, "MeanDecreaseAccuracy"],
+        main = "Feature Importance (Mean Decrease in Accuracy)",
+        horiz = TRUE, las = 1, col = "blue")
+
+```
+
+```{r}
+# Analyze misclassified samples
+misclassified <- test_data_binary[rf_predictions_binary != test_data_binary$Outcome, ]
+print(misclassified)
+
+# Distribution of true vs. predicted classes
+table(True = test_data_binary$Outcome, Predicted = rf_predictions_binary)
+
+```
+
+
+```{r}
+# Function to predict outcomes with parameters
+predict_outcome <- function(model, dataset, home_team, away_team, odds_home, odds_draw, odds_away) {
+  # Extract relevant data for the teams
+  home_data <- dataset %>% filter(HomeTeam == home_team) %>% slice_tail(n = 1)
+  away_data <- dataset %>% filter(AwayTeam == away_team) %>% slice_tail(n = 1)
+  
+  # Check if data is available for both teams
+  if (nrow(home_data) == 0 || nrow(away_data) == 0) {
+    return(paste("No data available for", home_team, "vs", away_team))
+  }
+  
+  # Combine rolling metrics and input odds into a prediction row
+  prediction_row <- tibble(
+    HomeRollingGoalsScored = as.numeric(home_data$HomeRollingGoalsScored),
+    HomeRollingGoalsConceded = as.numeric(home_data$HomeRollingGoalsConceded),
+    AwayRollingGoalsScored = as.numeric(away_data$AwayRollingGoalsScored),
+    AwayRollingGoalsConceded = as.numeric(away_data$AwayRollingGoalsConceded),
+    HomeRollingGoalDiff = as.numeric(home_data$HomeRollingGoalDiff),
+    AwayRollingGoalDiff = as.numeric(away_data$AwayRollingGoalDiff),
+    HomeWinRate = as.numeric(home_data$HomeWinRate),
+    AwayWinRate = as.numeric(away_data$AwayWinRate),
+    B365H = odds_home,
+    B365D = odds_draw,  # Ignored in binary predictions
+    B365A = odds_away,
+    HeadToHead = as.numeric(home_data$HeadToHead)
+  )
+  
+  # Print to debug prediction row
+  print("Prediction row values:")
+  print(prediction_row)
+  
+  # Predict outcome using the model
+  predicted_outcome <- predict(model, prediction_row)
+
+  # Ensure predicted outcome is a factor
+  predicted_outcome <- as.character(predicted_outcome)
+  
+  # Return the final prediction (ignoring Draws)
+  if (predicted_outcome == "Draw") {
+    predicted_outcome <- ifelse(runif(1) < 0.5, "Win", "Loss")
+  }
+  
+  # Return the prediction result
+  return(paste("Predicted Outcome for", home_team, "vs", away_team, ":", predicted_outcome))
+}
+
+```
+
+```{r}
+# Example predictions
+prediction1 <- predict_outcome(
+  model = rf_model,
+  dataset = final_dataset,
+  home_team = "Liverpool",
+  away_team = "Man City",
+  odds_home = 1.5,
+  odds_draw = 3.8,
+  odds_away = 2.8
+)
+print(prediction1)
+
+prediction2 <- predict_outcome(
+  model = rf_model,
+  dataset = final_dataset,
+  home_team = "Chelsea",
+  away_team = "Arsenal",
+  odds_home = 1.9,
+  odds_draw = 3.5,
+  odds_away = 3.1
+)
+print(prediction2)
+
+```
+
+```{r}
+# Define a data frame of upcoming matches and odds
+upcoming_matches <- tibble(
+  HomeTeam = c("Man City", "Arsenal", "Chelsea", "Man United"),
+  AwayTeam = c("Liverpool", "Chelsea", "Tottenham", "Leicester"),
+  B365H = c(1.5, 1.8, 2.1, 1.7),
+  B365D = c(3.8, 3.4, 3.5, 3.2),
+  B365A = c(2.8, 3.1, 3.0, 2.9)
+)
+
+# Predict outcomes for all matches
+bulk_predictions <- upcoming_matches %>%
+  rowwise() %>%
+  mutate(
+    Prediction = predict_outcome(
+      model = rf_model,
+      dataset = final_dataset,
+      home_team = HomeTeam,
+      away_team = AwayTeam,
+      odds_home = B365H,
+      odds_draw = B365D,
+      odds_away = B365A
+    )
+  )
+
+# View results
+print(bulk_predictions)
+
+```
+
+```{r}
+library(shiny)
+
+ui <- fluidPage(
+  titlePanel("EPL Match Outcome Predictor"),
+  sidebarLayout(
+    sidebarPanel(
+      textInput("home_team", "Enter Home Team:", value = "Manchester City"),
+      textInput("away_team", "Enter Away Team:", value = "Liverpool"),
+      numericInput("odds_home", "Odds for Home Win:", value = 1.5),
+      numericInput("odds_draw", "Odds for Draw:", value = 3.8),
+      numericInput("odds_away", "Odds for Away Win:", value = 2.8),
+      actionButton("predict", "Predict Outcome")
+    ),
+    mainPanel(
+      verbatimTextOutput("prediction")
+    )
+  )
+)
+
+server <- function(input, output) {
+  prediction_result <- reactive({
+    if (input$predict > 0) {
+      predict_outcome(
+        model = rf_model,
+        dataset = final_dataset,
+        home_team = input$home_team,
+        away_team = input$away_team,
+        odds_home = input$odds_home,
+        odds_draw = input$odds_draw,
+        odds_away = input$odds_away
+      )
+    }
+  })
+  
+  output$prediction <- renderText({
+    prediction_result()
+  })
+}
+
+shinyApp(ui = ui, server = server)
+
+```
